@@ -948,14 +948,29 @@ window.addEventListener('storage', (e) => {
 
 /* ---------- Splash ---------- */
 const splash = $('#splash');
+const SPLASH_MIN = 2200; // clicks can't skip it before this
+const SPLASH_TIME = 4400; // then it closes by itself
+const splashStart = Date.now();
+
+(function goldDust() {
+  const box = $('#splash-dust');
+  for (let i = 0; i < 28; i++) {
+    const size = (1 + Math.random() * 2.2).toFixed(1);
+    const dur = (6 + Math.random() * 6).toFixed(1);
+    box.append(h('span', {
+      style: `left:${(Math.random() * 100).toFixed(1)}%;top:${(45 + Math.random() * 55).toFixed(1)}%;width:${size}px;height:${size}px;animation-duration:${dur}s;animation-delay:-${(Math.random() * dur).toFixed(1)}s`,
+    }));
+  }
+})();
+
 function hideSplash() {
   if (!splash || splash.classList.contains('hide')) return;
   splash.classList.add('hide');
-  setTimeout(() => splash.remove(), 700);
+  setTimeout(() => splash.remove(), 1000);
   $('#today-input').focus({ preventScroll: true });
 }
-splash.addEventListener('click', hideSplash);
-setTimeout(hideSplash, 2600);
+splash.addEventListener('click', () => { if (Date.now() - splashStart >= SPLASH_MIN) hideSplash(); });
+setTimeout(hideSplash, SPLASH_TIME);
 
 /* ---------- Offline support ---------- */
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
