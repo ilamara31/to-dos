@@ -143,6 +143,9 @@
       <form class="composer" id="today-form" autocomplete="off">
         <input id="today-input" type="text" maxlength="300" enterkeyhint="done"
                placeholder="e.g. Finish 2 chapters of English literature" aria-label="New to-do for today">
+        <button type="button" class="icon-btn clock" aria-label="Set a reminder time">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></svg>
+        </button>
         <button type="button" class="icon-btn mic" aria-label="Say your to-do" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 10.5a7 7 0 0 0 14 0M12 17.5V21.5"/></svg>
         </button>
@@ -151,6 +154,7 @@
         </button>
       </form>
 
+      <div class="time-note" id="today-time-note" hidden></div>
       <div id="today-lists"></div>
     </section>
 
@@ -171,6 +175,9 @@
 
       <form class="composer" id="plan-form" autocomplete="off">
         <input id="plan-input" type="text" maxlength="300" enterkeyhint="done" aria-label="New plan">
+        <button type="button" class="icon-btn clock" aria-label="Set a reminder time">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></svg>
+        </button>
         <button type="button" class="icon-btn mic" aria-label="Say your plan" aria-pressed="false">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 10.5a7 7 0 0 0 14 0M12 17.5V21.5"/></svg>
         </button>
@@ -179,11 +186,13 @@
         </button>
       </form>
 
+      <div class="time-note" id="plan-time-note" hidden></div>
       <div id="plan-list"></div>
     </section>
   </main>
 
   <dialog class="sheet" id="sheet"></dialog>
+  <dialog class="sheet alarm" id="alarm"></dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <canvas id="confetti" aria-hidden="true"></canvas>
 

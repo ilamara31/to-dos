@@ -887,3 +887,91 @@ dialog.sheet::backdrop { background: rgba(20, 16, 30, .45); -webkit-backdrop-fil
 @media (max-width: 560px) {
   .moon { width: 78px; height: 78px; right: 5vw; top: 8vh; }
 }
+
+/* ---------- Reminders ---------- */
+.time-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -12px 0 20px;
+  padding: 10px 10px 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: var(--glass);
+  backdrop-filter: var(--glass);
+  font-size: 15px;
+  font-weight: 700;
+  animation: enter .3s cubic-bezier(.2, .8, .2, 1);
+}
+.time-note .grow { flex: 1; min-width: 0; }
+.time-note .link {
+  flex: none;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.time-note .link.clear { color: var(--danger); }
+
+/* the time shown on a to-do */
+.when {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.when svg { width: 13px; height: 13px; }
+.when.soon { color: #B45309; }
+.when.late { color: var(--danger); }
+:root[data-phase="evening"] .when.soon,
+:root[data-phase="night"] .when.soon { color: #FBBF5B; }
+:root[data-phase="evening"] .when.late,
+:root[data-phase="night"] .when.late { color: #FF8A8A; }
+.item.done .when { color: var(--muted); opacity: .75; }
+.item.ringing { border-color: var(--danger); animation: ringPulse 1.1s ease-in-out infinite; }
+@keyframes ringPulse {
+  0%, 100% { box-shadow: var(--shadow); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--danger) 25%, transparent), var(--shadow); }
+}
+
+/* quick time choices in the sheet */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  padding: 9px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.chip:hover { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); }
+.chip:active { transform: scale(.96); }
+
+/* the ringing alarm */
+dialog.alarm { width: min(420px, calc(100% - 32px)); text-align: center; }
+dialog.alarm .bell { font-size: 56px; line-height: 1; display: inline-block; animation: ring 1s ease-in-out infinite; }
+dialog.alarm h3 { margin: 14px 0 6px; font-size: 24px; line-height: 1.25; }
+dialog.alarm .at { margin: 0 0 20px; font-size: 15px; font-weight: 700; color: var(--danger); }
+dialog.alarm .sheet-footer { flex-direction: column; }
+dialog.alarm .btn { width: 100%; padding: 14px 18px; font-size: 16px; }
+@keyframes ring {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(14deg); }
+  40% { transform: rotate(-12deg); }
+  60% { transform: rotate(8deg); }
+  80% { transform: rotate(-6deg); }
+}

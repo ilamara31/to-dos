@@ -32,6 +32,7 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12.5l4 4 8-9"/></svg>',
   dots: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></svg>',
 };
 
 const cleanText = (s) => s.replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -76,6 +77,53 @@ function relDay(k, capital = false) {
   return capital ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
+/* ---------- Times and reminders ---------- */
+const isTime = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+
+/** "3:30 PM" in the user's own format */
+function timeLabel(hhmm) {
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const d = new Date();
+  d.setHours(hh, mm, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+const hhmmOf = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+/** When this to-do is due, in milliseconds (null if it has no time) */
+function dueAt(t) {
+  if (!t || !isTime(t.time)) return null;
+  const d = dateOf(t.date);
+  const [hh, mm] = t.time.split(':').map(Number);
+  d.setHours(hh, mm, 0, 0);
+  return d.getTime();
+}
+
+/** When the alarm should next go off (a snooze pushes it later) */
+const ringAt = (t) => {
+  const due = dueAt(t);
+  if (due == null) return null;
+  return t.snoozeUntil && t.snoozeUntil > due ? t.snoozeUntil : due;
+};
+
+/** "in 25 min" / "20 min late" / "" */
+function untilText(t) {
+  const due = dueAt(t);
+  if (due == null) return '';
+  const mins = Math.round((due - Date.now()) / 60000);
+  if (t.done) return '';
+  if (mins < 0) {
+    const late = -mins;
+    if (late < 60) return `${late} min late`;
+    if (late < 60 * 24) return `${Math.floor(late / 60)} h late`;
+    return 'late';
+  }
+  if (mins === 0) return 'now';
+  if (mins < 60) return `in ${mins} min`;
+  if (mins < 240) return `in ${Math.floor(mins / 60)} h ${mins % 60} min`;
+  return '';
+}
+
 /* ---------- Storage ---------- */
 const STORE_KEY = 'todos.v1';
 
@@ -108,9 +156,18 @@ let centeredDay = null;
 
 const find = (id) => todos.find((t) => t.id === id);
 const byOrder = (a, b) => (a.order || 0) - (b.order || 0);
+/** Things with a time come first, earliest first; the rest keep their order */
+const byTime = (a, b) => {
+  const ta = dueAt(a);
+  const tb = dueAt(b);
+  if (ta != null && tb != null) return ta - tb || byOrder(a, b);
+  if (ta != null) return -1;
+  if (tb != null) return 1;
+  return byOrder(a, b);
+};
 const byDoneAt = (a, b) => (a.doneAt || 0) - (b.doneAt || 0);
 const itemsOn = (k) => todos.filter((t) => t.date === k);
-const overdueItems = () => todos.filter((t) => !t.done && t.date < today).sort(byOrder);
+const overdueItems = () => todos.filter((t) => !t.done && t.date < today).sort(byTime);
 
 function allDoneToday() {
   const items = itemsOn(today);
@@ -128,9 +185,9 @@ const CHEERS = [
 ];
 
 /* ---------- Actions ---------- */
-function addTodo(text, date) {
+function addTodo(text, date, time = null) {
   const now = Date.now();
-  const t = { id: uid(), text, date, done: false, doneAt: null, order: now, createdAt: now };
+  const t = { id: uid(), text, date, time: isTime(time) ? time : null, done: false, doneAt: null, order: now, createdAt: now };
   todos.push(t);
   justAdded = t.id;
   save();
@@ -180,6 +237,8 @@ function moveTo(id, date) {
   t.date = date;
   t.done = false;
   t.doneAt = null;
+  t.rung = false;
+  t.snoozeUntil = null;
   t.order = Date.now();
   save();
   closeSheet();
@@ -224,6 +283,7 @@ function render() {
   renderToday();
   renderPlan();
   justAdded = null;
+  scheduleAlarm();
 }
 
 const currentSection = () => (view === 'today' ? $('#view-today') : $('#view-plan'));
@@ -253,8 +313,17 @@ function itemEl(t, { showFrom = false } = {}) {
     onclick: () => toggleDone(t.id),
   }, svg(ICON.check));
 
+  const due = dueAt(t);
+  let whenCls = 'when';
+  if (!t.done && due != null) {
+    if (due <= Date.now()) whenCls += ' late';
+    else if (due - Date.now() <= 30 * 60000) whenCls += ' soon';
+  }
+  const hint = untilText(t);
+
   const body = h('div', { class: 'body', onclick: () => openMenu(t.id) },
     h('p', { class: 'text' }, t.text),
+    due != null ? h('span', { class: whenCls }, svg(ICON.clock), timeLabel(t.time) + (hint ? ` · ${hint}` : '')) : null,
     showFrom ? h('span', { class: 'meta' }, `From ${relDay(t.date)}`) : null,
   );
 
@@ -282,7 +351,7 @@ function renderToday() {
   $('#greeting').textContent = greeting();
 
   const items = itemsOn(today);
-  const pending = items.filter((t) => !t.done).sort(byOrder);
+  const pending = items.filter((t) => !t.done).sort(byTime);
   const done = items.filter((t) => t.done).sort(byDoneAt);
   const overdue = overdueItems();
   const wrap = $('#today-lists');
@@ -374,7 +443,7 @@ function renderPlan() {
 
   // List
   const items = itemsOn(planDate);
-  const pending = items.filter((t) => !t.done).sort(byOrder);
+  const pending = items.filter((t) => !t.done).sort(byTime);
   const done = items.filter((t) => t.done).sort(byDoneAt);
   const wrap = $('#plan-list');
   wrap.replaceChildren();
@@ -437,6 +506,8 @@ function openMenu(id) {
     h('p', { class: 'sheet-sub' }, when),
     h('div', { class: 'actions' },
       action(t.done ? '↩️' : '✅', t.done ? 'Mark as not done' : 'Mark as done', () => { closeSheet(); toggleDone(id); }),
+      t.done ? null : action('⏰', isTime(t.time) ? `Reminder at ${timeLabel(t.time)}` : 'Set a reminder time', () => openTimeSheet({ todoId: id }), { hint: isTime(t.time) ? 'Change' : null }),
+      t.done || !isTime(t.time) ? null : action('🔕', 'Remove the time', () => { setTime(id, null); closeSheet(); }),
       t.done ? null : action('⏭️', t.date > today ? 'Move to another day' : 'Postpone', () => openPostpone(id)),
       action('✏️', 'Edit', () => openEdit(id)),
       action('🗑️', 'Delete', () => { closeSheet(); removeTodo(id); }, { danger: true })),
@@ -766,15 +837,233 @@ makeStars();
 makeClouds();
 shootingStars();
 
+/* ---------- Reminder times ---------- */
+// what the two "add" boxes will put on the next to-do
+const composerTime = { today: null, plan: null };
+
+function setTime(id, time) {
+  const t = find(id);
+  if (!t) return;
+  t.time = isTime(time) ? time : null;
+  t.rung = false;
+  t.snoozeUntil = null;
+  save();
+  render();
+  toast(t.time ? `Reminder set for ${timeLabel(t.time)} ⏰` : 'Reminder removed');
+  if (t.time) askNotifications();
+}
+
+/** Time picker. Either for one to-do ({todoId}) or for a composer ({box}). */
+function openTimeSheet(opts) {
+  const t = opts.todoId ? find(opts.todoId) : null;
+  const box = opts.box || null;
+  if (opts.todoId && !t) return;
+  const current = t ? t.time : composerTime[box];
+  const onDay = t ? t.date : (box === 'today' ? today : planDate);
+
+  const apply = (hhmm) => {
+    if (t) setTime(t.id, hhmm);
+    else {
+      composerTime[box] = hhmm;
+      renderTimeNotes();
+      if (hhmm) askNotifications();
+      currentSection().querySelector('.composer input').focus();
+    }
+    closeSheet();
+  };
+
+  // quick choices, only the ones still ahead of us today
+  const now = new Date();
+  const quick = [];
+  if (onDay === today) {
+    for (const mins of [15, 30, 60]) {
+      const d = new Date(now.getTime() + mins * 60000);
+      quick.push([`In ${mins < 60 ? mins + ' min' : '1 hour'}`, hhmmOf(d)]);
+    }
+  }
+  for (const [label, hhmm] of [['Morning', '09:00'], ['Noon', '12:00'], ['Afternoon', '15:00'], ['Evening', '18:00'], ['Night', '21:00']]) {
+    if (onDay !== today || hhmm > hhmmOf(now)) quick.push([`${label} · ${timeLabel(hhmm)}`, hhmm]);
+  }
+
+  const input = h('input', { type: 'time', class: 'field', value: current || '', 'aria-label': 'Time' });
+  const form = h('form', {
+    onsubmit: (e) => {
+      e.preventDefault();
+      if (!isTime(input.value)) { shake(input); return; }
+      apply(input.value);
+    },
+  }, h('div', { class: 'date-row' }, input, h('button', { type: 'submit', class: 'btn primary inline' }, 'Set')));
+
+  openSheet((inner) => inner.append(
+    h('h3', {}, 'Finish it by…'),
+    h('p', { class: 'sheet-sub clamp' }, t ? t.text : `The alarm rings if it isn’t ticked off by then (${relDay(onDay)}).`),
+    h('div', { class: 'chips' }, quick.map(([label, hhmm]) => h('button', { type: 'button', class: 'chip', onclick: () => apply(hhmm) }, label))),
+    h('p', { class: 'label' }, 'Or choose a time'),
+    form,
+    footer(
+      current ? h('button', { type: 'button', class: 'btn', onclick: () => apply(null) }, 'No time') : null,
+      h('button', { type: 'button', class: 'btn', onclick: closeSheet }, 'Cancel')),
+  ));
+}
+
+/** The pill under each add box showing the time waiting to be used */
+function renderTimeNotes() {
+  for (const box of ['today', 'plan']) {
+    const el = $(`#${box}-time-note`);
+    const time = composerTime[box];
+    el.hidden = !time;
+    if (!time) continue;
+    el.replaceChildren(
+      h('span', { class: 'grow' }, `⏰ Reminder at ${timeLabel(time)}`),
+      h('button', { type: 'button', class: 'link', onclick: () => openTimeSheet({ box }) }, 'Change'),
+      h('button', { type: 'button', class: 'link clear', onclick: () => { composerTime[box] = null; renderTimeNotes(); } }, 'Clear'));
+  }
+}
+
+/* ---------- The alarm ---------- */
+let alarmTimer = 0;
+let ringing = null; // the to-do currently ringing
+const alarmBox = $('#alarm');
+
+/** A gentle two-note bell, repeated — made in the browser, no file needed */
+let actx = null;
+let bellTimer = 0;
+function startBell() {
+  if (!settings.alarmSound) return;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch {
+    return;
+  }
+  const ding = (freq, at, len = 0.9) => {
+    const osc = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(0.35, at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    osc.connect(gain).connect(actx.destination);
+    osc.start(at);
+    osc.stop(at + len + 0.05);
+  };
+  const chime = () => {
+    const t0 = actx.currentTime;
+    ding(880, t0);
+    ding(1174.7, t0 + 0.28);
+    ding(880, t0 + 0.56, 1.1);
+  };
+  chime();
+  clearInterval(bellTimer);
+  bellTimer = setInterval(chime, 2600);
+  if (settings.music && !audio.paused) audio.pause(); // don't fight the music
+}
+
+function stopBell() {
+  clearInterval(bellTimer);
+  bellTimer = 0;
+  if (settings.music && audio.paused && !alarmBox.open) playMusic();
+}
+
+function askNotifications() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try {
+    Notification.requestPermission();
+  } catch { /* older browsers */ }
+}
+
+function notify(t) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(t.text, {
+      body: `Time's up · ${timeLabel(t.time)}`,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      tag: t.id,
+      requireInteraction: true,
+    });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch { /* notifications not available */ }
+}
+
+function showAlarm(t) {
+  ringing = t.id;
+  const close = () => { alarmBox.close(); };
+  alarmBox.replaceChildren(h('div', { class: 'sheet-inner' },
+    h('div', { class: 'bell' }, '⏰'),
+    h('h3', {}, t.text),
+    h('p', { class: 'at' }, `It's ${timeLabel(t.time)} — time's up`),
+    h('div', { class: 'sheet-footer' },
+      h('button', { type: 'button', class: 'btn primary', onclick: () => { close(); if (find(t.id)) toggleDone(t.id); } }, '✓ I finished it'),
+      h('button', { type: 'button', class: 'btn', onclick: () => { snooze(t.id, 10); close(); } }, 'Snooze 10 minutes'),
+      h('button', { type: 'button', class: 'btn', onclick: close }, 'Dismiss')),
+  ));
+  if (!alarmBox.open) alarmBox.showModal();
+  startBell();
+  notify(t);
+}
+
+alarmBox.addEventListener('close', () => {
+  ringing = null;
+  stopBell();
+  render();
+  scheduleAlarm();
+});
+
+function snooze(id, mins) {
+  const t = find(id);
+  if (!t) return;
+  t.snoozeUntil = Date.now() + mins * 60000;
+  t.rung = false;
+  save();
+  toast(`Snoozed — ringing again in ${mins} minutes`);
+}
+
+/** Anything due and still not ticked off? */
+function checkAlarms() {
+  if (alarmBox.open) return;
+  const now = Date.now();
+  let changed = false;
+  const due = todos
+    .filter((t) => !t.done && !t.rung && ringAt(t) != null && ringAt(t) <= now)
+    .sort((a, b) => ringAt(a) - ringAt(b));
+
+  for (const t of due) {
+    t.rung = true;
+    changed = true;
+    // Only ring for something recent — don't blast alarms for yesterday
+    if (now - ringAt(t) < 15 * 60000 && !alarmBox.open) {
+      save();
+      showAlarm(t);
+      return;
+    }
+  }
+  if (changed) { save(); render(); }
+  scheduleAlarm();
+}
+
+/** Sleep until exactly the next due time (and re-check at least every minute) */
+function scheduleAlarm() {
+  clearTimeout(alarmTimer);
+  const now = Date.now();
+  const next = todos
+    .filter((t) => !t.done && !t.rung && ringAt(t) != null && ringAt(t) > now)
+    .reduce((min, t) => Math.min(min, ringAt(t)), Infinity);
+  const wait = Math.min(next === Infinity ? 60000 : next - now + 250, 60000);
+  alarmTimer = setTimeout(checkAlarms, Math.max(1000, wait));
+}
+
 /* ---------- Settings ---------- */
 const SETTINGS_KEY = 'todos.settings.v1';
 const settings = (() => {
-  const defaults = { music: true, volume: 0.5 };
+  const defaults = { music: true, volume: 0.5, alarmSound: true };
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     return {
       music: typeof s.music === 'boolean' ? s.music : defaults.music,
       volume: typeof s.volume === 'number' && s.volume >= 0 && s.volume <= 1 ? s.volume : defaults.volume,
+      alarmSound: typeof s.alarmSound === 'boolean' ? s.alarmSound : defaults.alarmSound,
     };
   } catch {
     return defaults;
@@ -882,6 +1171,20 @@ function openSettings() {
     vol,
     h('button', { type: 'button', class: 'small-btn', onclick: () => { nextTrack(); playMusic(); } }, 'Next song'));
 
+  const alarmSw = h('button', {
+    type: 'button',
+    class: 'switch',
+    role: 'switch',
+    'aria-checked': String(settings.alarmSound),
+    'aria-label': 'Alarm sound',
+    onclick: () => {
+      settings.alarmSound = !settings.alarmSound;
+      saveSettings();
+      alarmSw.setAttribute('aria-checked', String(settings.alarmSound));
+      if (!settings.alarmSound) stopBell();
+    },
+  });
+
   openSheet((inner) => inner.append(
     h('h3', {}, 'Settings'),
     h('p', { class: 'sheet-sub' }, 'Make to-dos feel like yours.'),
@@ -890,30 +1193,74 @@ function openSettings() {
       h('span', { class: 'lbl' }, 'Music', h('small', { id: 'now-playing' }, nowPlayingText())),
       sw),
     volRow,
+    h('p', { class: 'label' }, 'Reminders'),
+    h('div', { class: 'setting' },
+      h('span', { class: 'ico', 'aria-hidden': 'true' }, '🔔'),
+      h('span', { class: 'lbl' }, 'Alarm sound', h('small', {}, notifyStatusText())),
+      alarmSw),
+    h('div', { class: 'setting' },
+      h('span', { class: 'ico', 'aria-hidden': 'true' }, '🧪'),
+      h('span', { class: 'lbl' }, 'Try it', h('small', {}, 'Ring the alarm now')),
+      h('button', { type: 'button', class: 'small-btn', onclick: testAlarm }, 'Test')),
     footer(h('button', { type: 'button', class: 'btn primary', onclick: closeSheet }, 'Done')),
   ));
+}
+
+
+function notifyStatusText() {
+  if (!('Notification' in window)) return 'Rings while the app is open';
+  if (Notification.permission === 'granted') return 'Rings + Mac notification';
+  if (Notification.permission === 'denied') return 'Notifications blocked in Safari settings';
+  return 'Rings while the app is open — tap Test to allow notifications';
+}
+
+function testAlarm() {
+  askNotifications();
+  closeSheet();
+  showAlarm({ id: '__test__', text: 'This is what a reminder looks like', time: hhmmOf(new Date()) });
+}
+
+/** Keep "in 25 min" / "10 min late" up to date without redrawing everything */
+function refreshTimes() {
+  document.querySelectorAll('.item[data-id]').forEach((li) => {
+    const t = find(li.dataset.id);
+    const el = li.querySelector('.when');
+    if (!t || !el) return;
+    const due = dueAt(t);
+    if (due == null) return;
+    const hint = untilText(t);
+    el.replaceChildren(svg(ICON.clock), timeLabel(t.time) + (hint ? ` · ${hint}` : ''));
+    let cls = 'when';
+    if (!t.done && due <= Date.now()) cls += ' late';
+    else if (!t.done && due - Date.now() <= 30 * 60000) cls += ' soon';
+    el.className = cls;
+  });
 }
 
 $('#settings-btn').addEventListener('click', openSettings);
 
 /* ---------- Wiring ---------- */
-function setupComposer(form, getDate) {
+function setupComposer(form, box, getDate) {
   const input = form.querySelector('input');
   const mic = form.querySelector('.mic');
+  const clock = form.querySelector('.clock');
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     stopVoice();
     const text = cleanText(input.value);
     if (!text) { shake(input); return; }
-    addTodo(text, getDate());
+    addTodo(text, getDate(), composerTime[box]);
+    composerTime[box] = null;
+    renderTimeNotes();
     input.value = '';
     input.focus();
   });
   mic.addEventListener('click', () => startVoice(input, mic));
+  clock.addEventListener('click', () => openTimeSheet({ box }));
 }
 
-setupComposer($('#today-form'), () => today);
-setupComposer($('#plan-form'), () => planDate);
+setupComposer($('#today-form'), 'today', () => today);
+setupComposer($('#plan-form'), 'plan', () => planDate);
 
 document.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
 
@@ -929,6 +1276,8 @@ document.addEventListener('keydown', (e) => {
 // Keep "today" correct: re-check the date every few seconds and when the app comes back.
 function checkDay() {
   applyPhase();
+  checkAlarms();
+  refreshTimes();
   const t = todayKey();
   if (t !== today) {
     today = t;
@@ -978,4 +1327,6 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 }
 
 render();
+renderTimeNotes();
 playMusic();
+checkAlarms();
