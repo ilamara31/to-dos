@@ -4,6 +4,21 @@
    to-dos — sponsored by ilan Games
    ========================================================= */
 
+/* ---------- Safety net: the page and this code must match ---------- */
+// An old cached page with new code (or the reverse) used to leave the app
+// half-dead and unclickable. Reload once from the network instead.
+(function checkPageMatchesCode() {
+  const needed = ['#alarm', '#today-form .clock', '#today-time-note', '#sheet', '#confetti'];
+  if (needed.every((sel) => document.querySelector(sel))) return;
+  const KEY = 'todos.reloadedAt';
+  let last = 0;
+  try { last = Number(sessionStorage.getItem(KEY) || 0); } catch { /* ignore */ }
+  if (Date.now() - last > 30000) {
+    try { sessionStorage.setItem(KEY, String(Date.now())); } catch { /* ignore */ }
+    location.reload();
+  }
+})();
+
 /* ---------- Tiny helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -910,6 +925,7 @@ function openTimeSheet(opts) {
 function renderTimeNotes() {
   for (const box of ['today', 'plan']) {
     const el = $(`#${box}-time-note`);
+    if (!el) continue;
     const time = composerTime[box];
     el.hidden = !time;
     if (!time) continue;
@@ -963,7 +979,7 @@ function startBell() {
 function stopBell() {
   clearInterval(bellTimer);
   bellTimer = 0;
-  if (settings.music && audio.paused && !alarmBox.open) playMusic();
+  if (settings.music && audio.paused && !(alarmBox && alarmBox.open)) playMusic();
 }
 
 function askNotifications() {
@@ -988,6 +1004,7 @@ function notify(t) {
 }
 
 function showAlarm(t) {
+  if (!alarmBox) return;
   ringing = t.id;
   const close = () => { alarmBox.close(); };
   alarmBox.replaceChildren(h('div', { class: 'sheet-inner' },
@@ -1004,7 +1021,7 @@ function showAlarm(t) {
   notify(t);
 }
 
-alarmBox.addEventListener('close', () => {
+if (alarmBox) alarmBox.addEventListener('close', () => {
   ringing = null;
   stopBell();
   render();
@@ -1022,7 +1039,7 @@ function snooze(id, mins) {
 
 /** Anything due and still not ticked off? */
 function checkAlarms() {
-  if (alarmBox.open) return;
+  if (!alarmBox || alarmBox.open) return;
   const now = Date.now();
   let changed = false;
   const due = todos
@@ -1033,7 +1050,7 @@ function checkAlarms() {
     t.rung = true;
     changed = true;
     // Only ring for something recent — don't blast alarms for yesterday
-    if (now - ringAt(t) < 15 * 60000 && !alarmBox.open) {
+    if (now - ringAt(t) < 15 * 60000) {
       save();
       showAlarm(t);
       return;
@@ -1237,10 +1254,12 @@ function refreshTimes() {
   });
 }
 
-$('#settings-btn').addEventListener('click', openSettings);
+const settingsBtn = $('#settings-btn');
+if (settingsBtn) settingsBtn.addEventListener('click', openSettings);
 
 /* ---------- Wiring ---------- */
 function setupComposer(form, box, getDate) {
+  if (!form) return;
   const input = form.querySelector('input');
   const mic = form.querySelector('.mic');
   const clock = form.querySelector('.clock');
@@ -1255,8 +1274,8 @@ function setupComposer(form, box, getDate) {
     input.value = '';
     input.focus();
   });
-  mic.addEventListener('click', () => startVoice(input, mic));
-  clock.addEventListener('click', () => openTimeSheet({ box }));
+  if (mic) mic.addEventListener('click', () => startVoice(input, mic));
+  if (clock) clock.addEventListener('click', () => openTimeSheet({ box }));
 }
 
 setupComposer($('#today-form'), 'today', () => today);

@@ -1,5 +1,5 @@
 // Network-first service worker: always fresh when online, still opens offline.
-const CACHE = 'todos-v6';
+const CACHE = 'todos-v7';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './manifest.webmanifest',
   './icons/logo.png', './icons/favicon.png', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
@@ -33,7 +33,8 @@ self.addEventListener('fetch', (e) => {
         return res;
       })
       .catch(() =>
-        caches.match(req).then((hit) => hit || (req.mode === 'navigate' ? caches.match('./index.html') : undefined))
+        caches.match(req, { ignoreSearch: true })
+          .then((hit) => hit || (req.mode === 'navigate' ? caches.match('./index.html') : undefined))
       )
   );
 });
